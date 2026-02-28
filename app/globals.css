@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fff4f7;
+  --foreground: #5a2746;
 }
 
 @theme inline {
@@ -14,8 +14,8 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #2b1323;
+    --foreground: #ffd7e6;
   }
 }
 
@@ -23,4 +23,76 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.85;
+  }
+}
+
+.timeline-card {
+  animation: fade-up 0.6s ease-out both;
+}
+
+.timeline-dot {
+  animation: pulse-soft 1.8s ease-in-out infinite;
+}
+
+@keyframes heart-fall {
+  0% {
+    transform: translate3d(0, -12vh, 0) rotate(var(--heart-rotate, 0deg));
+    opacity: 0;
+  }
+  10% {
+    opacity: var(--heart-opacity, 0.4);
+  }
+  50% {
+    transform: translate3d(var(--heart-drift), 52vh, 0) rotate(var(--heart-rotate, 0deg));
+    opacity: calc(var(--heart-opacity, 0.4) * 0.85);
+  }
+  100% {
+    transform: translate3d(calc(var(--heart-drift) * -1), 110vh, 0)
+      rotate(var(--heart-rotate, 0deg));
+    opacity: 0;
+  }
+}
+
+.heart-field {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.falling-heart {
+  position: absolute;
+  top: -12vh;
+  color: rgb(255 95 156 / 0.45);
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: 0 0 8px rgb(255 95 156 / 0.2);
+  animation-name: heart-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
 }
