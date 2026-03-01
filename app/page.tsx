@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import { timelineEvents } from "./data/timeline-events";
+import { timelineEvents, musicTracks } from "./data/timeline-events";
 
 const heartDecorations = [
   { left: "6%", size: 14, delay: "0s", duration: "13s", drift: "-18px", rotate: "-12deg", opacity: 0.28 },
@@ -52,13 +52,14 @@ const heartDecorations = [
 
 export default function Home() {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const masterGainRef = useRef<GainNode | null>(null);
-  const musicTimerRef = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [scrollDelay, setScrollDelay] = useState(1800);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
   const [musicVolume, setMusicVolume] = useState(45);
+  const [selectedTrack, setSelectedTrack] = useState(0);
+  const [slideshowOpen, setSlideshowOpen] = useState(false);
+  const [slideshowIndex, setSlideshowIndex] = useState(0);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -104,92 +105,96 @@ export default function Home() {
     };
   }, [isPlaying, scrollDelay]);
 
-  const stopMockMusic = () => {
-    if (musicTimerRef.current !== null) {
-      window.clearInterval(musicTimerRef.current);
-      musicTimerRef.current = null;
-    }
-
-    if (audioContextRef.current && audioContextRef.current.state === "running") {
-      audioContextRef.current.suspend();
-    }
-  };
-
-  const startMockMusic = async () => {
-    if (!audioContextRef.current) {
-      audioContextRef.current = new AudioContext();
-    }
-
-    const context = audioContextRef.current;
-    if (context.state !== "running") {
-      await context.resume();
-    }
-
-    if (!masterGainRef.current) {
-      const masterGain = context.createGain();
-      masterGain.gain.value = musicVolume / 100;
-      masterGain.connect(context.destination);
-      masterGainRef.current = masterGain;
-    }
-
-    const notes = [261.63, 329.63, 392.0, 349.23];
-    let noteIndex = 0;
-
-    const playNote = () => {
-      const oscillator = context.createOscillator();
-      const gainNode = context.createGain();
-
-      oscillator.type = "sine";
-      oscillator.frequency.value = notes[noteIndex % notes.length];
-      noteIndex += 1;
-
-      gainNode.gain.setValueAtTime(0.0001, context.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.06, context.currentTime + 0.08);
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.55);
-
-      oscillator.connect(gainNode);
-      gainNode.connect(masterGainRef.current!);
-
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.6);
-    };
-
-    playNote();
-    musicTimerRef.current = window.setInterval(playNote, 700);
-  };
-
-  const toggleMockMusic = async () => {
+  const toggleMusic = useCallback(async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
     if (isMusicPlaying) {
-      stopMockMusic();
+      audio.pause();
       setIsMusicPlaying(false);
-      return;
+    } else {
+      audio.src = musicTracks[selectedTrack].src;
+      audio.volume = musicVolume / 100;
+      audio.loop = true;
+      await audio.play();
+      setIsMusicPlaying(true);
     }
+  }, [isMusicPlaying, selectedTrack, musicVolume]);
 
-    await startMockMusic();
-    setIsMusicPlaying(true);
-  };
-
+  // Update volume when slider changes
   useEffect(() => {
-    if (masterGainRef.current && audioContextRef.current) {
-      const context = audioContextRef.current;
-      const normalizedVolume = Math.max(0.0001, musicVolume / 100);
-      masterGainRef.current.gain.cancelScheduledValues(context.currentTime);
-      masterGainRef.current.gain.setTargetAtTime(
-        normalizedVolume,
-        context.currentTime,
-        0.05,
-      );
+    if (audioRef.current) {
+      audioRef.current.volume = musicVolume / 100;
     }
   }, [musicVolume]);
 
+  // Switch track when dropdown changes while playing
   useEffect(() => {
-    return () => {
-      stopMockMusic();
+    const audio = audioRef.current;
+    if (!audio || !isMusicPlaying) return;
+    audio.src = musicTracks[selectedTrack].src;
+    audio.volume = musicVolume / 100;
+    audio.loop = true;
+    audio.play();
+  }, [selectedTrack]);
+
+  // Fullscreen slideshow auto-advance
+  useEffect(() => {
+    if (!slideshowOpen) return;
+
+    const timer = window.setInterval(() => {
+      setSlideshowIndex((prev) =>
+        prev >= timelineEvents.length - 1 ? 0 : prev + 1,
+      );
+    }, scrollDelay);
+
+    return () => window.clearInterval(timer);
+  }, [slideshowOpen, scrollDelay]);
+
+  // Keyboard controls for slideshow
+  useEffect(() => {
+    if (!slideshowOpen) return;
+
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSlideshowOpen(false);
+      } else if (e.key === "ArrowRight" || e.key === " ") {
+        e.preventDefault();
+        setSlideshowIndex((prev) =>
+          prev >= timelineEvents.length - 1 ? 0 : prev + 1,
+        );
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setSlideshowIndex((prev) =>
+          prev <= 0 ? timelineEvents.length - 1 : prev - 1,
+        );
+      }
     };
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [slideshowOpen]);
+
+  const openSlideshow = useCallback(async () => {
+    setSlideshowIndex(0);
+    setSlideshowOpen(true);
+    if (!isMusicPlaying) {
+      const audio = audioRef.current;
+      if (audio) {
+        audio.src = musicTracks[selectedTrack].src;
+        audio.volume = musicVolume / 100;
+        audio.loop = true;
+        await audio.play();
+        setIsMusicPlaying(true);
+      }
+    }
+  }, [isMusicPlaying, selectedTrack, musicVolume]);
+
+  const closeSlideshow = useCallback(() => {
+    setSlideshowOpen(false);
   }, []);
 
   return (
-    <main className="relative min-h-screen bg-background px-6 py-12 text-foreground md:px-10">
+    <main className="relative min-h-screen bg-background px-6 py-10 text-foreground md:h-screen md:overflow-hidden md:px-10 md:py-0">
       <div className="heart-field" aria-hidden="true">
         {heartDecorations.map((heart, index) => (
           <span
@@ -211,113 +216,209 @@ export default function Home() {
         ))}
       </div>
 
-      <div className="relative z-10 mx-auto w-full max-w-7xl">
-        <h1 className="mb-5 text-center text-4xl font-bold tracking-tight md:text-6xl">
-          Happy 3rd Anniversary!!
-        </h1>
+      <div className="relative z-10 mx-auto flex w-full max-w-7xl flex-col md:h-full">
+        <div className="hidden md:block md:flex-1"></div>
+        <div className="flex w-full flex-col md:shrink-0 md:items-center md:gap-10">
+          <h1 className="mb-5 text-center text-4xl font-bold tracking-tight md:mb-0 md:text-6xl">
+            Geoffrey and Gemma 2025/26 Wrapped
+          </h1>
 
-        <div className="mb-9 flex flex-col items-center gap-4">
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => setIsPlaying((prev) => !prev)}
-              className="rounded-full border border-foreground/20 px-5 py-2 text-sm font-semibold transition hover:bg-foreground/10"
-            >
-              {isPlaying ? "Pause" : "Play"}
-            </button>
+          <div className="mb-8 flex flex-col items-center gap-4 md:mb-0 md:gap-6">
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setIsPlaying((prev) => !prev)}
+                className="rounded-full border border-foreground/20 px-5 py-2 text-sm font-semibold transition hover:bg-foreground/10"
+              >
+                {isPlaying ? "Pause" : "Play"}
+              </button>
 
-            <div className="flex items-center gap-3 rounded-full border border-foreground/20 px-4 py-2">
-            <label htmlFor="speed" className="text-sm font-medium">
-              Scroll Speed
-            </label>
-            <input
-              id="speed"
-              type="range"
-              min={1200}
-              max={5000}
-              step={200}
-              value={scrollDelay}
-              onChange={(event) => setScrollDelay(Number(event.target.value))}
-              className="w-44 accent-foreground"
-            />
-            <span className="w-12 text-right text-sm text-foreground/70">
-              {(scrollDelay / 1000).toFixed(1)}s
-            </span>
+              <button
+                type="button"
+                onClick={openSlideshow}
+                className="rounded-full border border-foreground/20 px-5 py-2 text-sm font-semibold transition hover:bg-foreground/10"
+              >
+                Slideshow
+              </button>
 
+              <div className="flex items-center gap-3 rounded-full border border-foreground/20 px-4 py-2">
+                <label htmlFor="speed" className="text-sm font-medium">
+                  Scroll Speed
+                </label>
+                <input
+                  id="speed"
+                  type="range"
+                  min={1000}
+                  max={10000}
+                  step={200}
+                  value={scrollDelay}
+                  onChange={(event) => setScrollDelay(Number(event.target.value))}
+                  className="w-44 accent-foreground"
+                />
+                <span className="w-12 text-right text-sm text-foreground/70">
+                  {(scrollDelay / 1000).toFixed(1)}s
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={toggleMusic}
+                className="rounded-full border border-foreground/20 px-5 py-2 text-sm font-semibold transition hover:bg-foreground/10"
+              >
+                {isMusicPlaying ? "Music On" : "Music Off"}
+              </button>
+
+              <select
+                value={selectedTrack}
+                onChange={(e) => setSelectedTrack(Number(e.target.value))}
+                className="rounded-full border border-foreground/20 bg-background px-4 py-2 text-sm font-medium text-foreground outline-none transition hover:bg-foreground/10"
+              >
+                {musicTracks.map((track, i) => (
+                  <option key={track.src} value={i}>
+                    {track.label}
+                  </option>
+                ))}
+              </select>
+
+              <div className="flex items-center gap-3 rounded-full border border-foreground/20 px-4 py-2">
+                <label htmlFor="volume" className="text-sm font-medium">
+                  Music Volume
+                </label>
+                <input
+                  id="volume"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={musicVolume}
+                  onChange={(event) => setMusicVolume(Number(event.target.value))}
+                  className="w-36 accent-foreground"
+                />
+                <span className="w-10 text-right text-sm text-foreground/70">
+                  {musicVolume}%
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <button
-              type="button"
-              onClick={toggleMockMusic}
-              className="rounded-full border border-foreground/20 px-5 py-2 text-sm font-semibold transition hover:bg-foreground/10"
+          <section className="relative w-full">
+            <div
+              ref={scrollRef}
+              className="timeline-scroll max-h-[72vh] snap-y snap-mandatory overflow-auto pr-2 pt-3 md:snap-x md:overflow-x-auto md:overflow-y-hidden md:pb-4 md:pt-4 md:max-h-none"
             >
-              {isMusicPlaying ? "Music Off" : "Music On"}
-            </button>
-
-            <div className="flex items-center gap-3 rounded-full border border-foreground/20 px-4 py-2">
-              <label htmlFor="volume" className="text-sm font-medium">
-                Music Volume
-              </label>
-              <input
-                id="volume"
-                type="range"
-                min={0}
-                max={100}
-                step={1}
-                value={musicVolume}
-                onChange={(event) => setMusicVolume(Number(event.target.value))}
-                className="w-36 accent-foreground"
-              />
-              <span className="w-10 text-right text-sm text-foreground/70">
-                {musicVolume}%
-              </span>
-            </div>
-
-          </div>
-        </div>
-
-        <section className="relative">
-          <div
-            ref={scrollRef}
-            className="timeline-scroll max-h-[72vh] snap-y snap-mandatory overflow-auto pr-2 pt-3 md:max-h-none md:snap-x md:pb-6 md:pt-6"
-          >
-            <div className="relative flex flex-col gap-10 md:w-max md:flex-row md:items-stretch md:gap-8">
+            <div className="relative flex flex-col gap-10 md:w-max md:flex-row md:items-center md:gap-8">
               <div className="absolute left-4 top-0 h-full w-1 rounded-full bg-foreground/20 md:left-0 md:top-1/2 md:h-1 md:w-full md:-translate-y-1/2" />
 
               {timelineEvents.map((event, index) => (
                 <article
-                  key={`${event.title}-${event.date}`}
+                  key={event.image}
                   className="timeline-card relative ml-10 snap-start rounded-2xl border border-foreground/10 bg-background/80 p-4 shadow-sm backdrop-blur transition-transform duration-300 hover:-translate-y-0.5 md:ml-0 md:w-[320px] md:shrink-0 md:hover:-translate-y-1"
                   style={{ animationDelay: `${index * 120}ms` }}
                 >
                   <span className="timeline-dot absolute -left-[2.15rem] top-6 h-4 w-4 rounded-full bg-foreground md:left-1/2 md:top-0 md:-translate-x-1/2 md:-translate-y-1/2" />
 
-                  <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-foreground/65">
-                    {event.date}
-                  </div>
-
-                  <div className="relative mb-4 aspect-[4/3] overflow-hidden rounded-xl border border-foreground/10">
+                  <div className="relative mb-3 aspect-4/3 overflow-hidden rounded-xl border border-foreground/10">
                     <Image
                       src={event.image}
-                      alt={event.title}
+                      alt={`Photo ${index + 1}`}
                       fill
                       className="object-cover"
                       sizes="(max-width: 768px) 100vw, 320px"
                     />
                   </div>
-
-                  <h2 className="mb-2 text-xl font-semibold">{event.title}</h2>
-                  <p className="text-sm leading-relaxed text-foreground/75">
-                    {event.description}
-                  </p>
+                  {event.caption && (
+                    <p className="text-sm leading-relaxed text-foreground/75">
+                      {event.caption}
+                    </p>
+                  )}
                 </article>
               ))}
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        </div>
+        <div className="hidden md:block md:flex-1"></div>
       </div>
+
+      {/* Fullscreen Slideshow Overlay */}
+      {slideshowOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-black">
+          {/* Close button */}
+          <button
+            type="button"
+            onClick={closeSlideshow}
+            className="absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-2xl text-white backdrop-blur transition hover:bg-white/20"
+            aria-label="Close slideshow"
+          >
+            &times;
+          </button>
+
+          {/* Slide counter */}
+          <div className="absolute left-4 top-4 z-10 rounded-full bg-white/10 px-3 py-1 text-sm text-white backdrop-blur">
+            {slideshowIndex + 1} / {timelineEvents.length}
+          </div>
+
+          {/* Image area */}
+          <div className="relative flex flex-1 items-center justify-center overflow-hidden">
+            {/* Prev button */}
+            <button
+              type="button"
+              onClick={() =>
+                setSlideshowIndex((prev) =>
+                  prev <= 0 ? timelineEvents.length - 1 : prev - 1,
+                )
+              }
+              className="absolute left-3 z-10 flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-2xl text-white backdrop-blur transition hover:bg-white/20 md:left-6"
+              aria-label="Previous photo"
+            >
+              &#8249;
+            </button>
+
+            <div className="relative h-full w-full">
+              <Image
+                key={slideshowIndex}
+                src={timelineEvents[slideshowIndex].image}
+                alt={`Photo ${slideshowIndex + 1}`}
+                fill
+                className="object-contain animate-[fade-up_0.4s_ease-out]"
+                sizes="100vw"
+                priority
+              />
+            </div>
+
+            {/* Next button */}
+            <button
+              type="button"
+              onClick={() =>
+                setSlideshowIndex((prev) =>
+                  prev >= timelineEvents.length - 1 ? 0 : prev + 1,
+                )
+              }
+              className="absolute right-3 z-10 flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-2xl text-white backdrop-blur transition hover:bg-white/20 md:right-6"
+              aria-label="Next photo"
+            >
+              &#8250;
+            </button>
+          </div>
+
+          {/* Caption bar */}
+          <div className="shrink-0 bg-black/80 px-6 py-4 text-center backdrop-blur">
+            {timelineEvents[slideshowIndex].caption ? (
+              <p className="text-base text-white">
+                {timelineEvents[slideshowIndex].caption}
+              </p>
+            ) : null}
+            <p className="mt-1 text-sm text-white/50">
+              {slideshowIndex + 1} of {timelineEvents.length}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden audio element for music playback */}
+      <audio ref={audioRef} />
     </main>
   );
 }
